@@ -30,6 +30,7 @@ This document provides a comprehensive technical breakdown of this Signature Ver
 11. [Domain Shift & Practical Preprocessing Insights](#11-domain-shift--practical-preprocessing-insights)
 12. [File-by-File Codebase Tour](#12-file-by-file-codebase-tour)
 13. [CLI Reference & Quick Start](#13-cli-reference--quick-start)
+14. [MLOps & MLflow Tracking Architecture](#14-mlops--mlflow-tracking-architecture)
 
 ---
 
@@ -400,10 +401,14 @@ For real-world deployment across mixed scan/digital sources:
 | :--- | :--- | :--- |
 | [`model.py`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/model.py) | Defines the neural network and loss function. | `SignatureEncoder`, `ContrastiveLoss`, `SiameseNetwork` |
 | [`dataset.py`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/dataset.py) | Custom PyTorch dataset with contrastive pair mining and augmentation. | `SignaturePairDataset`, `load_user_images` |
-| [`train.py`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/train.py) | Full training loop, validation, EER computation, and plot generation. | `train_one_epoch`, `validate`, `find_eer`, `plot_loss_curves` |
-| [`verify.py`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/verify.py) | Standalone inference script for verifying any two image paths. | `load_encoder`, `preprocess_image`, `verify_signatures` |
+| [`train.py`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/train.py) | Full training loop, validation, EER computation, MLflow logging, and plot generation. | `train_one_epoch`, `validate`, `find_eer`, `plot_loss_curves`, `plot_roc_curve` |
+| [`verify.py`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/verify.py) | Standalone inference script for verifying signatures (supports checkpoints & MLflow models). | `load_encoder`, `preprocess_image`, `verify_signatures` |
+| [`mlflow_utils.py`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/mlflow_utils.py) | Production MLflow tracking manager, metric/artifact logging, and fault tolerance. | `MLflowTracker`, `check_server_health` |
 | [`main.py`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/main.py) | Unified command-line interface entry point. | Dispatches to `train` or `verify` subcommands |
-| [`requirements.txt`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/requirements.txt) | Project dependencies. | PyTorch, torchvision, Pillow, scikit-learn, matplotlib |
+| [`docker-compose.yml`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/docker-compose.yml) | Docker Compose specification for containerized MLflow tracking server and UI. | `mlflow` service definition |
+| [`Dockerfile.mlflow`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/Dockerfile.mlflow) | Dockerfile for lightweight, production-ready MLflow server image. | Python 3.11-slim + MLflow + SQLite |
+| [`MLFLOW_GUIDE.md`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/MLFLOW_GUIDE.md) | Dedicated operational guide for Docker MLflow UI, experiment tracking, and Model Registry. | MLOps procedures |
+| [`requirements.txt`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/requirements.txt) | Project dependencies. | PyTorch, torchvision, Pillow, scikit-learn, matplotlib, MLflow |
 
 ---
 
@@ -447,3 +452,37 @@ Trained checkpoints and visual diagnostics will be output to the [`checkpoints/`
 - `threshold.pth`: Saved optimal threshold and validation EER
 - `loss_curve.png`: Epoch-by-epoch loss curve
 - `distance_distribution.png`: Genuine vs. forgery separation histogram
+
+---
+
+## 14. MLOps & MLflow Tracking Architecture
+
+This project includes a production-grade MLflow tracking and Model Registry setup.
+
+### 1. Dockerized MLflow UI
+The MLflow tracking server runs as an isolated Docker service with persistent storage on the host:
+```powershell
+# Start the MLflow UI & tracking server
+docker compose up -d
+
+# Open in browser
+# http://localhost:5000
+
+# View container logs
+docker compose logs -f mlflow
+```
+
+### 2. Automated Tracking & Model Registry
+When running `python main.py train`:
+- All training hyperparameters, dataset user splits, and git/system metadata are automatically recorded.
+- Epoch-level train/validation losses and learning rates are plotted in real time.
+- Biometric evaluation metrics (EER, optimal threshold, accuracy at EER, ROC AUC) are logged.
+- The model can be registered directly into the MLflow Model Registry via `--register-model <ModelName>`.
+
+### 3. Loading Models from MLflow for Inference
+`verify.py` supports direct inference from the MLflow Model Registry:
+```powershell
+python main.py verify --img1 ref1.png --img2 ref2.png --model-uri "models:/SignatureVerificationEncoder/latest"
+```
+For complete details, see [`MLFLOW_GUIDE.md`](file:///c:/Users/iamvi/MyProjects/POC/sigverify/sigverify/MLFLOW_GUIDE.md).
+

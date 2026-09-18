@@ -1,0 +1,11 @@
+{
+  "best_val_loss": 0.22705622017383575,
+  "eer": 0.2206731116081091,
+  "eer_threshold": 0.3286573146292585,
+  "accuracy_at_eer": 0.774,
+  "roc_auc": 0.8523374936873241,
+  "genuine_pairs_mean_distance": 0.29011300206184387,
+  "genuine_pairs_std_distance": 0.053648196160793304,
+  "negative_pairs_mean_distance": 0.420320987701416,
+  "negative_pairs_std_distance": 0.10213519632816315
+}

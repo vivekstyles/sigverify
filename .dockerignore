@@ -1,0 +1,12 @@
+.venv/
+.git/
+Dataset/
+checkpoints/
+mlruns/
+mlflow_data/
+__pycache__/
+*.png
+*.jpg
+*.jpeg
+*.pth
+.env

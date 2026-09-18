@@ -4,3 +4,4 @@ pillow
 numpy
 matplotlib
 scikit-learn
+mlflow>=2.10.0

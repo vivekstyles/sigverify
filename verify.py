@@ -1,16 +1,28 @@
 """
-verify.py — Signature verification using the trained Siamese encoder.
+verify.py — Signature verification using trained Siamese encoder with MLflow support.
 
 Usage:
     python verify.py --img1 path/to/sig1.png --img2 path/to/sig2.png
     python verify.py --img1 path/to/sig1.png --img2 path/to/sig2.png --threshold 0.5
+    python verify.py --img1 path/to/sig1.png --img2 path/to/sig2.png --model-uri models:/SignatureVerificationEncoder/latest
 
 Computes embedding distance between two signature images and outputs
 a similarity score with an accept/reject decision.
 """
 
 import os
+import sys
+
+# Ensure UTF-8 stdout/stderr on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import argparse
+import logging
 
 import torch
 import torch.nn.functional as F
@@ -19,6 +31,9 @@ from PIL import Image
 
 from model import SignatureEncoder
 
+# Suppress noisy external warnings
+logger = logging.getLogger("sigverify.verify")
+
 
 # Constants
 IMG_HEIGHT = 155
@@ -26,22 +41,53 @@ IMG_WIDTH = 220
 CHECKPOINT_DIR = "checkpoints"
 
 
-def load_encoder(checkpoint_path=None, device="cpu"):
-    """Load trained encoder from checkpoint."""
+def load_encoder(checkpoint_path=None, model_uri=None, tracking_uri=None, device="cpu"):
+    """
+    Load trained encoder from either an MLflow model URI or a local checkpoint.
+
+    Args:
+        checkpoint_path: Path to local .pth checkpoint.
+        model_uri: MLflow model URI (e.g., 'models:/SignatureVerificationEncoder/latest'
+                   or 'runs:/<run_id>/model').
+        tracking_uri: MLflow tracking server URI (defaults to env or http://localhost:5000).
+        device: Device to map model to.
+
+    Returns:
+        Loaded SignatureEncoder in eval mode.
+    """
+    if model_uri:
+        import mlflow
+        import mlflow.pytorch
+        effective_tracking_uri = tracking_uri or os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+        mlflow.set_tracking_uri(effective_tracking_uri)
+        print(f"Connecting to MLflow Tracking Server at: {effective_tracking_uri}")
+        print(f"Loading model from MLflow URI: {model_uri}...")
+        encoder = mlflow.pytorch.load_model(model_uri, map_location=device)
+        if hasattr(encoder, "to"):
+            try:
+                encoder.to(device)
+            except Exception:
+                pass
+        if hasattr(encoder, "eval"):
+            try:
+                encoder.eval()
+            except (NotImplementedError, AttributeError):
+                pass
+        return encoder
+
     if checkpoint_path is None:
         checkpoint_path = os.path.join(CHECKPOINT_DIR, "best_encoder.pth")
 
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(
             f"Checkpoint not found: {checkpoint_path}\n"
-            "Run train.py first to train the encoder."
+            "Run train.py first to train the encoder, or supply --model-uri."
         )
 
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     embedding_dim = checkpoint.get("embedding_dim", 128)
 
     encoder = SignatureEncoder(embedding_dim=embedding_dim, pretrained=False)
-    print(checkpoint["encoder_state_dict"])
     encoder.load_state_dict(checkpoint["encoder_state_dict"])
     encoder.to(device)
     encoder.eval()
@@ -82,7 +128,15 @@ def preprocess_image(image_path):
 def get_embedding(encoder, image_path, device="cpu"):
     """Compute embedding for a single signature image."""
     img_tensor = preprocess_image(image_path).to(device)
-    embedding = encoder(img_tensor)
+    try:
+        embedding = encoder(img_tensor)
+    except Exception:
+        if hasattr(encoder, "module"):
+            embedding = encoder.module()(img_tensor)
+        else:
+            raise
+    if isinstance(embedding, (tuple, list)):
+        embedding = embedding[0]
     return embedding
 
 
@@ -111,8 +165,7 @@ def verify_signatures(encoder, img1_path, img2_path, threshold=None, device="cpu
 
     emb1 = get_embedding(encoder, img1_path, device)
     emb2 = get_embedding(encoder, img2_path, device)
-    print(emb1)
-    print(emb2)
+
     # Euclidean distance
     distance = F.pairwise_distance(emb1, emb2, p=2).item()
 
@@ -140,6 +193,10 @@ def main():
     parser.add_argument("--img1", required=True, help="Path to first signature image")
     parser.add_argument("--img2", required=True, help="Path to second signature image")
     parser.add_argument("--checkpoint", default=None, help="Path to encoder checkpoint")
+    parser.add_argument("--model-uri", default=None,
+                        help="MLflow model URI (e.g. models:/SignatureVerificationEncoder/latest or runs:/<run_id>/model)")
+    parser.add_argument("--mlflow-tracking-uri", default=None,
+                        help="MLflow tracking server URI (default: http://localhost:5000 or env MLFLOW_TRACKING_URI)")
     parser.add_argument("--threshold", type=float, default=None,
                         help="Decision threshold (default: from training)")
     args = parser.parse_args()
@@ -147,14 +204,18 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load model
-    encoder = load_encoder(args.checkpoint, device)
+    encoder = load_encoder(
+        checkpoint_path=args.checkpoint,
+        model_uri=args.model_uri,
+        tracking_uri=args.mlflow_tracking_uri,
+        device=device
+    )
 
     # Verify
     result = verify_signatures(
         encoder, args.img1, args.img2,
         threshold=args.threshold, device=device
     )
-
 
     # Display results
     print(f"\n{'='*50}")
